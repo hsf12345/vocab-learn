@@ -116,13 +116,14 @@ function saveRecords() { localStorage.setItem(STORAGE_KEY, JSON.stringify(record
 function getGroupStatus(id) { return records[id] || null; }
 
 function setGroupStatus(id, mastered, correct, total, opts) {
-    if (!records[id]) records[id] = {correct:0, total:0, mastered:false, consecutiveCorrect:0, hadReviewError:false, lastTime:""};
+    if (!records[id]) records[id] = {correct:0, total:0, mastered:false, consecutiveCorrect:0, hadReviewError:false, learnDone:false, lastTime:""};
     records[id].correct += correct;
     records[id].total += total;
     records[id].mastered = mastered;
     if (opts) {
         if (opts.consecutiveCorrect !== undefined) records[id].consecutiveCorrect = opts.consecutiveCorrect;
         if (opts.hadReviewError !== undefined) records[id].hadReviewError = opts.hadReviewError;
+        if (opts.learnDone !== undefined) records[id].learnDone = opts.learnDone;
     }
     records[id].lastTime = new Date().toLocaleString("zh-CN");
     saveRecords();
@@ -134,7 +135,10 @@ function getMastered() { return DATA.filter(function(g){ var s = getGroupStatus(
 function getNextLearnIdx() {
     for (var i = 0; i < DATA.length; i++) {
         var s = getGroupStatus(DATA[i].id);
-        if (!s || !s.mastered) return i;
+        // 跳过已掌握的，和在学习模式中已经做过的（不管对错）
+        if (!s) return i;
+        if (s.mastered || s.learnDone) continue;
+        return i;
     }
     return -1;
 }
@@ -277,41 +281,33 @@ function finishGroup() {
     if (isReview) {
         hadReviewError = prev.hadReviewError || false;
         if (hadWrong) {
-            // 复习模式做错：需要再做对2次才能掌握
             mastered = false;
             consecutiveCorrect = 0;
             hadReviewError = true;
         } else if (hadReviewError) {
-            // 复习模式做对，但之前在复习中错过：累加连续正确
             var prevCC = prev.consecutiveCorrect || 0;
             consecutiveCorrect = prevCC + 1;
             mastered = consecutiveCorrect >= 2;
         } else {
-            // 复习模式做对，之前没在复习中错过：直接掌握
             mastered = true;
             consecutiveCorrect = 1;
         }
+        setGroupStatus(group.id, mastered, correct, group.words.length, {consecutiveCorrect: consecutiveCorrect, hadReviewError: hadReviewError});
     } else {
-        // 学习模式
+        // 学习模式：做完就标记 learnDone，不再出现在学习模式
+        var wasWrongBefore = prev && prev.total > 0 && !prev.mastered;
         if (hadWrong) {
-            // 做错：未掌握，归入复习
             mastered = false;
             consecutiveCorrect = 0;
+        } else if (wasWrongBefore) {
+            mastered = false;
+            consecutiveCorrect = 1;
         } else {
-            var wasWrongBefore = prev && prev.total > 0 && !prev.mastered;
-            if (wasWrongBefore) {
-                // 之前做错过，这次做对：算过了，但归入复习队列
-                mastered = false;
-                consecutiveCorrect = 1;
-            } else {
-                // 首次全对：直接掌握
-                mastered = true;
-                consecutiveCorrect = 1;
-            }
+            mastered = true;
+            consecutiveCorrect = 1;
         }
+        setGroupStatus(group.id, mastered, correct, group.words.length, {consecutiveCorrect: consecutiveCorrect, hadReviewError: hadReviewError, learnDone: true});
     }
-
-    setGroupStatus(group.id, mastered, correct, group.words.length, {consecutiveCorrect: consecutiveCorrect, hadReviewError: hadReviewError});
     updateHeader();
     showResult(mastered, consecutiveCorrect, isReview, hadReviewError);
 }
